@@ -362,7 +362,6 @@ function getFeedData(user, callback) {
               if (err) {
                 return sendDatabaseError(res, err);
               }
-              // Return a resolved version of the likeCounter
               res.send(feedItem.likeCounter.map((userId) => userMap[userId]));
             });
           }
@@ -566,21 +565,42 @@ function getFeedData(user, callback) {
     var fromUser = getUserIdFromToken(req.get('Authorization'));
     var comment = req.body;
     var author = req.body.author;
-    var feedItemId = req.params.feeditemid;
+    var feedItemId = new ObjectID(req.params.feeditemid);
     if (fromUser === author) {
-      var feedItem = readDocument('feedItems', feedItemId);
       // Initialize likeCounter to empty.
       comment.likeCounter = [];
       // Push returns the new length of the array.
       // The index of the new element is the length of the array minus 1.
       // Example: [].push(1) returns 1, but the index of the new element is 0.
-      var index = feedItem.comments.push(comment) - 1;
+      //console.log(comment);
+      db.collection('feedItems').updateOne({ _id: feedItemId },
+        {
+          $addToSet: {
+            comments: comment
+          }
+        },
+        function(err) {
+          if (err) {
+            res.status(500).send("A database error occurred: " + err);
+          }
+          getFeedItem(feedItemId,  function(err, feedItem){
+            if (err) {
+              res.status(500).send("A database error occurred: " + err);
+            }
+            res.status(201);
+            res.send(feedItem);
+          });
+
+        }
+      );
+
+      /*var index = feedItem.comments.push(comment) - 1;
       writeDocument('feedItems', feedItem);
       // 201: Created.
       res.status(201);
       res.set('Location', '/feeditem/' + feedItemId + "/comments/" + index);
       // Return a resolved version of the feed item.
-      res.send(getFeedItemSync(feedItemId));
+      res.send(getFeedItemSync(feedItemId));*/
     } else {
       // Unauthorized.
       res.status(401).end();
@@ -588,6 +608,52 @@ function getFeedData(user, callback) {
   });
 
   app.put('/feeditem/:feeditemid/comments/:commentindex/likelist/:userid', function(req, res) {
+    var fromUser = getUserIdFromToken(req.get('Authorization'));
+    var feedItemId = new ObjectID(req.params.feeditemid);
+    var userId = req.params.userid;
+    var commentIdx = parseInt(req.params.commentindex, 10);
+    if (fromUser === userId) {
+      // First, we can update the like counter.
+      db.collection('feedItems').updateOne({ _id: feedItemId },
+        {
+          // Add `userId` to the likeCounter if it is not already
+          // in the array.
+          $addToSet: {
+            ["comments." + commentIdx + ".likeCounter"]: new ObjectID(userId)
+          }
+        }, function(err) {
+          if (err) {
+            return sendDatabaseError(res, err);
+          }
+          // Second, grab the feed item now that we have updated it.
+          db.collection('feedItems').findOne({ _id: feedItemId }, function(err, feedItem) {
+            if (err) {
+              return sendDatabaseError(res, err);
+            }
+            var authorId = new ObjectID(feedItem.comments[commentIdx].author);
+            db.collection('users').findOne({ _id: authorId }, function(err, author){
+              if (err) {
+                return sendDatabaseError(res, err);
+              }
+
+              resolveUserObjects(feedItem.comments[commentIdx].likeCounter, function(err, userMap) {
+                if (err) {
+                  return sendDatabaseError(res, err);
+                }
+                feedItem.comments[commentIdx].likeCounter.map((userId) => userMap[userId]);
+                feedItem.comments[commentIdx].author =  author;
+                res.send(feedItem.comments[commentIdx]);
+              });
+            });
+          }
+        );
+      });
+    } else {
+      // 401: Unauthorized.
+      res.status(401).end();
+    }
+  });
+  /*{
     var fromUser = getUserIdFromToken(req.get('Authorization'));
     var userId = parseInt(req.params.userid, 10);
     var feedItemId = parseInt(req.params.feeditemid, 10);
@@ -608,9 +674,53 @@ function getFeedData(user, callback) {
       // Unauthorized.
       res.status(401).end();
     }
-  });
+  });*/
 
   app.delete('/feeditem/:feeditemid/comments/:commentindex/likelist/:userid', function(req, res) {
+    var fromUser = getUserIdFromToken(req.get('Authorization'));
+    var feedItemId = new ObjectID(req.params.feeditemid);
+    var userId = req.params.userid;
+    var commentIdx = parseInt(req.params.commentindex, 10);
+    if (fromUser === userId) {
+      // Step 1: Remove userId from the likeCounter.
+      db.collection('feedItems').updateOne({ _id: feedItemId },
+        {
+          // Only removes the userId from the likeCounter, if it is in the likeCounter.
+          $pull: {
+            ["comments." + commentIdx + ".likeCounter"]: new ObjectID(userId)
+          }
+        }, function(err) {
+        if (err) {
+          return sendDatabaseError(res, err);
+        }
+        // Step 2: Get the feed item.
+        db.collection('feedItems').findOne({ _id: feedItemId }, function(err, feedItem) {
+          if (err) {
+            return sendDatabaseError(res, err);
+          }
+          var authorId = new ObjectID(feedItem.comments[commentIdx].author);
+          db.collection('users').findOne({ _id: authorId }, function(err, author){
+            if (err) {
+              return sendDatabaseError(res, err);
+            }
+
+            resolveUserObjects(feedItem.comments[commentIdx].likeCounter, function(err, userMap) {
+              if (err) {
+                return sendDatabaseError(res, err);
+              }
+              feedItem.comments[commentIdx].likeCounter.map((userId) => userMap[userId]);
+              feedItem.comments[commentIdx].author =  author;
+              res.send(feedItem.comments[commentIdx]);
+            });
+          });
+        });
+      });
+    } else {
+      // 401: Unauthorized.
+      res.status(401).end();
+    }
+  });
+  /*{
     var fromUser = getUserIdFromToken(req.get('Authorization'));
     var userId = parseInt(req.params.userid, 10);
     var feedItemId = parseInt(req.params.feeditemid, 10);
@@ -630,7 +740,7 @@ function getFeedData(user, callback) {
       // Unauthorized.
       res.status(401).end();
     }
-  });
+  });*/
 
   // Reset the database.
   app.post('/resetdb', function(req, res) {
