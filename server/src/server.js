@@ -573,6 +573,7 @@ function getFeedData(user, callback) {
       // The index of the new element is the length of the array minus 1.
       // Example: [].push(1) returns 1, but the index of the new element is 0.
       //console.log(comment);
+      comment.author = new ObjectID(author);
       db.collection('feedItems').updateOne({ _id: feedItemId },
         {
           $addToSet: {
